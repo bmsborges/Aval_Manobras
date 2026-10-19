@@ -12,22 +12,50 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("👨‍🚒 Gestão, Registo e Exportação de Avaliações (Ficheiro ZIP)")
+st.title("👨‍🚒 Gestão, Registo e Exportação de Avaliações (.xlsx / .zip)")
 st.write(
-    "Registe as cotações no formulário e exporte os dois ficheiros Excel preenchidos compactados num **ficheiro ZIP**."
+    "Registe as cotações no formulário e exporte os dois ficheiros convertidos e preenchidos estritamente no formato **.xlsx**."
 )
 
 
-# --- FUNÇÕES AUXILIARES DE EXCEL E ZIP ---
+# --- FUNÇÕES DE SUPORTE E CONVERSÃO EXCEL ---
+
+
+def abrir_workbook_garantido_xlsx(file_obj):
+    """Carrega o ficheiro uploaded e converte para um Workbook openpyxl (.xlsx) nativo."""
+    file_obj.seek(0)
+    nome_ficheiro = getattr(file_obj, "name", "").lower()
+
+    if nome_ficheiro.endswith(".xls") and not nome_ficheiro.endswith(".xlsx"):
+        # Se for um formato antigo .xls, converter via Pandas / xlrd
+        dict_dfs = pd.read_excel(file_obj, sheet_name=None, header=None)
+        wb = openpyxl.Workbook()
+        # Remover aba padrão
+        wb.remove(wb.active)
+
+        for sheet_name, df in dict_dfs.items():
+            ws = wb.create_sheet(title=str(sheet_name)[:31])
+            for r_idx, row in df.iterrows():
+                for c_idx, val in enumerate(row):
+                    if pd.notna(val):
+                        ws.cell(
+                            row=r_idx + 1, column=c_idx + 1, value=val
+                        )
+        return wb
+    else:
+        # Ficheiro .xlsx nativo
+        return openpyxl.load_workbook(file_obj)
 
 
 def definir_valor_seguro(sheet, row, col, value):
-    """Escreve na célula tratando com segurança células mescladas (MergedCells)."""
+    """Escreve o valor na célula tratando com segurança células mescladas (MergedCells)."""
     cell = sheet.cell(row=row, column=col)
     if isinstance(cell, MergedCell):
         for rng in sheet.merged_cells.ranges:
             if cell.coordinate in rng:
-                top_left_cell = sheet.cell(row=rng.min_row, column=rng.min_col)
+                top_left_cell = sheet.cell(
+                    row=rng.min_row, column=rng.min_col
+                )
                 top_left_cell.value = value
                 return
     else:
@@ -75,14 +103,13 @@ def extrair_nomes_formandos(file_formandos, coluna_letra="K"):
     return nomes
 
 
-def gerar_ficheiros_excel_bytes(
+def gerar_ficheiros_xlsx_bytes(
     file_modelo, file_pauta, lista_formandos, avaliacoes
 ):
-    """Gera e compila os ficheiros Excel em memória."""
+    """Compila os dois ficheiros garantindo a exportação no formato .xlsx."""
 
-    # 1. Grelha de Observação Prática (1 Tab por Formando)
-    file_modelo.seek(0)
-    wb_modelo = openpyxl.load_workbook(file_modelo)
+    # 1. Grelha Prática com 1 Tab por Formando (.xlsx)
+    wb_modelo = abrir_workbook_garantido_xlsx(file_modelo)
     aba_base = wb_modelo.active
 
     for idx, nome in enumerate(lista_formandos):
@@ -93,9 +120,11 @@ def gerar_ficheiros_excel_bytes(
         aba_nova.title = nome_aba
 
         # Identificação do formando na tab
-        definir_valor_seguro(aba_nova, row=1, col=7, value=f"FORMANDO: {nome}")
+        definir_valor_seguro(
+            aba_nova, row=1, col=7, value=f"FORMANDO: {nome}"
+        )
 
-        # Se existirem avaliações para este formando, preencher os campos
+        # Inserir cotações registadas no formulário
         if nome in avaliacoes:
             dados = avaliacoes[nome]
             definir_valor_seguro(
@@ -117,19 +146,18 @@ def gerar_ficheiros_excel_bytes(
                 aba_nova, row=8, col=2, value=f"OBS: {dados.get('obs', '')}"
             )
 
-    # Remover a aba base/template original
+    # Remover a aba template original
     if len(wb_modelo.sheetnames) > 1 and aba_base.title in wb_modelo.sheetnames:
         wb_modelo.remove(aba_base)
 
-    bytes_modelo = io.BytesIO()
-    wb_modelo.save(bytes_modelo)
-    bytes_modelo.seek(0)
+    bytes_modelo_xlsx = io.BytesIO()
+    wb_modelo.save(bytes_modelo_xlsx)
+    bytes_modelo_xlsx.seek(0)
 
-    # 2. Pauta Final Consolidada
-    bytes_pauta = None
+    # 2. Pauta Final Consolidada (.xlsx)
+    bytes_pauta_xlsx = None
     if file_pauta:
-        file_pauta.seek(0)
-        wb_pauta = openpyxl.load_workbook(file_pauta)
+        wb_pauta = abrir_workbook_garantido_xlsx(file_pauta)
         sheet_pauta = wb_pauta.active
 
         linha_inicial = 14
@@ -142,29 +170,27 @@ def gerar_ficheiros_excel_bytes(
                 sheet_pauta, row=linha_atual, col=11, value=nome
             )
 
-        bytes_pauta = io.BytesIO()
-        wb_pauta.save(bytes_pauta)
-        bytes_pauta.seek(0)
+        bytes_pauta_xlsx = io.BytesIO()
+        wb_pauta.save(bytes_pauta_xlsx)
+        bytes_pauta_xlsx.seek(0)
 
-    return bytes_modelo, bytes_pauta
+    return bytes_modelo_xlsx, bytes_pauta_xlsx
 
 
-def criar_zip_com_ficheiros(bytes_modelo, bytes_pauta):
-    """Empacota os ficheiros gerados num ficheiro ZIP em memória."""
+def criar_zip_com_ficheiros_xlsx(bytes_modelo, bytes_pauta):
+    """Empacota os ficheiros em formato .xlsx dentro de um arquivo .zip em memória."""
     zip_buffer = io.BytesIO()
 
     with zipfile.ZipFile(
         zip_buffer, "w", zipfile.ZIP_DEFLATED, False
     ) as zip_file:
-        # Adicionar o ficheiro de avaliação prática com tabs por formando
         zip_file.writestr(
-            "1_Grelha_Observacao_Pratica_Tabs.xlsx", bytes_modelo.getvalue()
+            "Grelha_Observacao_Pratica_Tabs.xlsx", bytes_modelo.getvalue()
         )
 
-        # Adicionar a pauta consolidada (se aplicável)
         if bytes_pauta:
             zip_file.writestr(
-                "2_Pauta_Final_Avaliacao.xlsx", bytes_pauta.getvalue()
+                "Pauta_Final_Avaliacao.xlsx", bytes_pauta.getvalue()
             )
 
     zip_buffer.seek(0)
@@ -383,99 +409,4 @@ if st.session_state["lista_formandos"]:
                 key=f"soc_1_{formando_selecionado}",
             )
             v_soc_2 = st.slider(
-                "Exame primário da(s) vítima(s)",
-                0,
-                5,
-                int(dados["soc_2"]),
-                key=f"soc_2_{formando_selecionado}",
-            )
-            v_soc_3 = st.slider(
-                "Definição do estado clínico",
-                0,
-                5,
-                int(dados["soc_3"]),
-                key=f"soc_3_{formando_selecionado}",
-            )
-            v_soc_4 = st.slider(
-                "Cuidados de emergência",
-                0,
-                5,
-                int(dados["soc_4"]),
-                key=f"soc_4_{formando_selecionado}",
-            )
-            v_soc_5 = st.slider(
-                "Coordenação da extração",
-                0,
-                5,
-                int(dados["soc_5"]),
-                key=f"soc_5_{formando_selecionado}",
-            )
-
-        st.markdown("#### 5. Observações Gerais")
-        v_obs = st.text_area(
-            "Observações da Avaliação:",
-            value=dados["obs"],
-            placeholder="Insira notas do formador...",
-            key=f"obs_{formando_selecionado}",
-        )
-
-        submetido = st.form_submit_button("💾 Guardar Avaliação do Formando")
-
-        if submetido:
-            st.session_state["avaliacoes"][formando_selecionado] = {
-                "of1_1": v_of1_1,
-                "of1_2": v_of1_2,
-                "of1_3": v_of1_3,
-                "of1_4": v_of1_4,
-                "of1_5": v_of1_5,
-                "of2_1": v_of2_1,
-                "of2_2": v_of2_2,
-                "of2_3": v_of2_3,
-                "of2_4": v_of2_4,
-                "of2_5": v_of2_5,
-                "as_1": v_as_1,
-                "as_2": v_as_2,
-                "as_3": v_as_3,
-                "as_4": v_as_4,
-                "as_5": v_as_5,
-                "soc_1": v_soc_1,
-                "soc_2": v_soc_2,
-                "soc_3": v_soc_3,
-                "soc_4": v_soc_4,
-                "soc_5": v_soc_5,
-                "obs": v_obs,
-            }
-            st.success(
-                f"✅ Avaliação do formando **{formando_selecionado}** guardada na sessão!"
-            )
-
-    # --- SECÇÃO DE EXPORTAÇÃO COMPACTADA EM ZIP ---
-
-    st.markdown("---")
-    st.subheader("📦 Exportação Compactada (Ficheiro ZIP)")
-
-    if st.button("🚀 Compilar e Gerar Ficheiro ZIP", type="primary"):
-        try:
-            with st.spinner("A compilar os ficheiros num arquivo ZIP..."):
-                bytes_mod, bytes_pauta = gerar_ficheiros_excel_bytes(
-                    file_modelo,
-                    file_pauta,
-                    st.session_state["lista_formandos"],
-                    st.session_state["avaliacoes"],
-                )
-                buffer_zip = criar_zip_com_ficheiros(bytes_mod, bytes_pauta)
-
-            st.success("✅ Ficheiro ZIP gerado com sucesso!")
-
-            st.download_button(
-                label="📦 Descarregar Avaliacoes_Completas.zip",
-                data=buffer_zip,
-                file_name="Avaliacoes_Completas.zip",
-                mime="application/zip",
-            )
-        except Exception as e:
-            st.error(f"Erro ao gerar o ficheiro ZIP: {e}")
-else:
-    st.info(
-        "Carregue os ficheiros no painel lateral e clique em 'Carregar Formandos dos Ficheiros'."
-    )
+                "Exame prim
