@@ -409,4 +409,103 @@ if st.session_state["lista_formandos"]:
                 key=f"soc_1_{formando_selecionado}",
             )
             v_soc_2 = st.slider(
-                "Exame prim
+                "Exame primário da(s) vítima(s)",
+                0,
+                5,
+                int(dados["soc_2"]),
+                key=f"soc_2_{formando_selecionado}",
+            )
+            v_soc_3 = st.slider(
+                "Definição do estado clínico",
+                0,
+                5,
+                int(dados["soc_3"]),
+                key=f"soc_3_{formando_selecionado}",
+            )
+            v_soc_4 = st.slider(
+                "Cuidados de emergência",
+                0,
+                5,
+                int(dados["soc_4"]),
+                key=f"soc_4_{formando_selecionado}",
+            )
+            v_soc_5 = st.slider(
+                "Coordenação da extração",
+                0,
+                5,
+                int(dados["soc_5"]),
+                key=f"soc_5_{formando_selecionado}",
+            )
+
+        st.markdown("#### 5. Observações Gerais")
+        v_obs = st.text_area(
+            "Observações da Avaliação:",
+            value=dados["obs"],
+            placeholder="Insira notas do formador...",
+            key=f"obs_{formando_selecionado}",
+        )
+
+        submetido = st.form_submit_button("💾 Guardar Avaliação do Formando")
+
+        if submetido:
+            st.session_state["avaliacoes"][formando_selecionado] = {
+                "of1_1": v_of1_1,
+                "of1_2": v_of1_2,
+                "of1_3": v_of1_3,
+                "of1_4": v_of1_4,
+                "of1_5": v_of1_5,
+                "of2_1": v_of2_1,
+                "of2_2": v_of2_2,
+                "of2_3": v_of2_3,
+                "of2_4": v_of2_4,
+                "of2_5": v_of2_5,
+                "as_1": v_as_1,
+                "as_2": v_as_2,
+                "as_3": v_as_3,
+                "as_4": v_as_4,
+                "as_5": v_as_5,
+                "soc_1": v_soc_1,
+                "soc_2": v_soc_2,
+                "soc_3": v_soc_3,
+                "soc_4": v_soc_4,
+                "soc_5": v_soc_5,
+                "obs": v_obs,
+            }
+            st.success(
+                f"✅ Avaliação do formando **{formando_selecionado}** guardada na sessão!"
+            )
+
+    # --- SECÇÃO DE EXPORTAÇÃO COMPACTADA EM ZIP COM FICHEIROS .XLSX ---
+
+    st.markdown("---")
+    st.subheader("📦 Exportação de Ficheiros (.xlsx / .zip)")
+
+    if st.button("🚀 Exportar Ficheiros em .xlsx (ZIP)", type="primary"):
+        try:
+            with st.spinner("A converter e compilar os ficheiros .xlsx..."):
+                bytes_mod_xlsx, bytes_pauta_xlsx = (
+                    gerar_ficheiros_xlsx_bytes(
+                        file_modelo,
+                        file_pauta,
+                        st.session_state["lista_formandos"],
+                        st.session_state["avaliacoes"],
+                    )
+                )
+                buffer_zip = criar_zip_com_ficheiros_xlsx(
+                    bytes_mod_xlsx, bytes_pauta_xlsx
+                )
+
+            st.success("✅ Ficheiros .xlsx compilados e prontos em arquivo ZIP!")
+
+            st.download_button(
+                label="📦 Descarregar Avaliacoes_XLSX.zip",
+                data=buffer_zip,
+                file_name="Avaliacoes_XLSX.zip",
+                mime="application/zip",
+            )
+        except Exception as e:
+            st.error(f"Erro ao gerar a exportação: {e}")
+else:
+    st.info(
+        "Carregue os ficheiros no painel lateral e clique em 'Carregar Formandos dos Ficheiros'."
+    )
