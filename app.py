@@ -1,109 +1,116 @@
+import io
 import os
+from pathlib import Path
 import openpyxl
 import pandas as pd
+import streamlit as st
+
+st.set_page_config(
+    page_title="Importador de Formandos - ENB",
+    page_icon="📋",
+    layout="centered",
+)
+
+st.title("📋 Importador de Formandos para Grelha de Avaliação")
+st.write(
+    "Carregue a pauta/grelha de avaliação e a lista de formandos (Excel/CSV) para preencher automaticamente os nomes."
+)
 
 
-def importar_formandos(
-    ficheiro_avaliacao_path, ficheiro_formandos_path, aba_destino="Grelha Avaliacao"
-):
-    """Importa a lista de formandos para o ficheiro de avaliação Excel.
+def importar_formandos_stream(file_avaliacao, file_formandos, aba_destino="Grelha Avaliacao"):
+    """Lê os ficheiros enviados via Streamlit em memória e devolve um buffer
 
-    :param ficheiro_avaliacao_path: Caminho do ficheiro 'Avaliação
-        Formandos.xlsx'
-    :param ficheiro_formandos_path: Caminho do ficheiro com a lista de formandos
-        (.xlsx ou .csv)
-    :param aba_destino: Nome da folha/aba no ficheiro de avaliação
+    BytesIO do ficheiro preenchido.
     """
-    if not os.path.exists(ficheiro_avaliacao_path):
-        raise FileNotFoundError(
-            f"Ficheiro de avaliação não encontrado: {ficheiro_avaliacao_path}"
-        )
-
-    # 1. Carregar lista de formandos do ficheiro fonte
-    if ficheiro_formandos_path.endswith(".csv"):
-        df_formandos = pd.read_csv(ficheiro_formandos_path)
+    # 1. Ler a lista de formandos
+    if file_formandos.name.endswith(".csv"):
+        df_formandos = pd.read_csv(file_formandos)
     else:
-        df_formandos = pd.read_excel(ficheiro_formandos_path)
+        df_formandos = pd.read_excel(file_formandos)
 
-    print(f"Formandos encontrados no ficheiro de origem: {len(df_formandos)}")
-
-    # Identificar colunas relevantes (ajustar conforme o cabeçalho do ficheiro de origem)
+    # Identificar a coluna do Nome
     col_nome = next(
         (c for c in df_formandos.columns if "nome" in str(c).lower()), None
-    )
-    col_nif = next(
-        (
-            c
-            for c in df_formandos.columns
-            if "nif" in str(c).lower() or "doc" in str(c).lower()
-        ),
-        None,
     )
 
     if not col_nome:
         raise ValueError(
-            "Não foi possível identificar a coluna de 'Nome' no ficheiro de formandos."
+            "Não foi encontrada nenhuma coluna com a palavra 'Nome' no ficheiro de formandos."
         )
 
-    # 2. Abrir o ficheiro Excel de avaliação preservando fórmulas
-    wb = openpyxl.load_workbook(ficheiro_avaliacao_path)
+    # 2. Carregar o modelo Excel preservando formatação e fórmulas
+    wb = openpyxl.load_workbook(file_avaliacao)
 
-    if aba_destino not in wb.sheetnames:
-        aba_destino = wb.sheetnames[0]
+    if aba_destino in wb.sheetnames:
+        sheet = wb[aba_destino]
+    else:
+        sheet = wb.active
 
-    sheet = wb[aba_destino]
-
-    # 3. Localizar a linha de início dos formandos (Linha 14 em diante)
-    linha_inicial = 14  # Linha standard da grelha de avaliação
+    # 3. Posição inicial na grelha de avaliação
+    linha_inicial = 14  # Linha onde começam os formandos
     coluna_num = 2  # Coluna B (Nº)
     coluna_nome = 11  # Coluna K (Nome)
 
-    # 4. Preencher a grelha com os formandos
+    # 4. Inserir os formandos na grelha
     for idx, row in df_formandos.iterrows():
         linha_atual = linha_inicial + idx
+        nome = str(row[col_nome]).strip()
 
-        num_formando = idx + 1
-        nome_formando = str(row[col_nome]).strip()
+        sheet.cell(row=linha_atual, column=coluna_num, value=idx + 1)
+        sheet.cell(row=linha_atual, column=coluna_nome, value=nome)
 
-        # Inserir Número e Nome
-        sheet.cell(row=linha_atual, column=coluna_num, value=num_formando)
-        sheet.cell(row=linha_atual, column=coluna_nome, value=nome_formando)
+    # 5. Guardar num buffer de memória
+    output_buffer = io.BytesIO()
+    wb.save(output_buffer)
+    output_buffer.seek(0)
 
-        print(f"[{num_formando:02d}] Importado: {nome_formando}")
+    return output_buffer, len(df_formandos)
 
-    # 5. Guardar o ficheiro atualizado
-    nome_saida = ficheiro_avaliacao_path.replace(".xlsx", "_Atualizado.xlsx")
-    wb.save(nome_saida)
-    print(
-        f"\nImportação concluída com sucesso! Ficheiro gerado: {nome_saida}"
+
+# --- INTERFACE STREAMLIT ---
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("1. Ficheiro de Avaliação")
+    file_eval = st.file_uploader(
+        "Carregue a Grelha/Ficha (.xlsx)",
+        type=["xlsx"],
+        key="eval",
     )
 
+with col2:
+    st.subheader("2. Lista de Formandos")
+    file_list = st.file_uploader(
+        "Carregue os Formandos (.xlsx, .xls, .csv)",
+        type=["xlsx", "xls", "csv"],
+        key="list",
+    )
 
-# --- EXEMPLO DE EXECUÇÃO ---
-if __name__ == "__main__":
-    # Substituir pelos nomes reais dos ficheiros
-    FICHEIRO_AVALIACAO = "Avaliação Formandos.xlsx"
-    FICHEIRO_LISTA_FORMANDOS = "Lista_Formandos_DTP.xlsx"
+if file_eval and file_list:
+    st.success("Ficheiros carregados com sucesso!")
 
-    # Criar ficheiro de teste para demonstração se não existir a lista
-    if not os.path.exists(FICHEIRO_LISTA_FORMANDOS):
-        dados_exemplo = pd.DataFrame({
-            "Nº": range(1, 6),
-            "Nome": [
-                "Angelique Sofia Pais Freitas",
-                "António Fernando da Silva Rodrigues",
-                "Camila Oliveira Gonçalves",
-                "Cláudia Marisa Torres Silva",
-                "Fábio José Oliveira Matos",
-            ],
-            "NIF": [
-                "232790370",
-                "238595374",
-                "252913710",
-                "222375167",
-                "214940004",
-            ],
-        })
-        dados_exemplo.to_excel(FICHEIRO_LISTA_FORMANDOS, index=False)
+    if st.button("🚀 Importar Formandos", type="primary"):
+        try:
+            with st.spinner("A processar a importação..."):
+                excel_gerado, num_total = importar_formandos_stream(
+                    file_eval, file_list
+                )
 
-    importar_formandos(FICHEIRO_AVALIACAO, FICHEIRO_LISTA_FORMANDOS)
+            st.success(
+                f"✅ Foram importados {num_total} formandos com sucesso!"
+            )
+
+            # Botão de Download do ficheiro final
+            st.download_button(
+                label="📥 Descarregar Ficheiro de Avaliação Atualizado",
+                data=excel_gerado,
+                file_name="Avaliacao_Formandos_Preenchido.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        except Exception as e:
+            st.error(f"Ocorreu um erro no processamento: {e}")
+else:
+    st.info(
+        "Por favor, carregue ambos os ficheiros acima para ativar a importação."
+    )
