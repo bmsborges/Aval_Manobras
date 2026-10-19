@@ -1,5 +1,6 @@
 import io
 import openpyxl
+from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import column_index_from_string
 import pandas as pd
 import streamlit as st
@@ -16,18 +17,30 @@ st.write(
 )
 
 
+def definir_valor_celula_seguro(sheet, row, col, value):
+    """Escreve o valor na célula de forma segura, tratando células mescladas (MergedCells)."""
+    cell = sheet.cell(row=row, column=col)
+
+    if isinstance(cell, MergedCell):
+        # Se a célula for mesclada, localiza a célula principal (topo esquerdo)
+        for rng in sheet.merged_cells.ranges:
+            if cell.coordinate in rng:
+                top_left_cell = sheet.cell(row=rng.min_row, column=rng.min_col)
+                top_left_cell.value = value
+                return
+    else:
+        cell.value = value
+
+
 def extrair_nomes_formandos(file_formandos, coluna_letra="K"):
     """Extrai os nomes dos formandos a partir da coluna especificada (ex: 'K')."""
-    # Converter a letra da coluna (ex: 'K') para índice 0-based (A=0, B=1, ..., K=10)
     col_idx = column_index_from_string(coluna_letra.upper()) - 1
 
-    # Ler o ficheiro sem assumir que a linha 0 é o cabeçalho
     if file_formandos.name.endswith(".csv"):
         df = pd.read_csv(file_formandos, header=None)
     else:
         df = pd.read_excel(file_formandos, header=None)
 
-    # Verificar se a coluna existe no ficheiro
     if df.shape[1] <= col_idx:
         raise ValueError(
             f"O ficheiro enviado possui apenas {df.shape[1]} colunas, mas a Coluna {coluna_letra.upper()} (coluna {col_idx + 1}) foi selecionada."
@@ -35,7 +48,6 @@ def extrair_nomes_formandos(file_formandos, coluna_letra="K"):
 
     coluna_dados = df.iloc[:, col_idx]
 
-    # Palavras a ignorar (cabeçalhos e metadados comuns)
     palavras_ignorar = [
         "nome",
         "nome do formando",
@@ -56,7 +68,6 @@ def extrair_nomes_formandos(file_formandos, coluna_letra="K"):
         if not val_str:
             continue
 
-        # Filtrar cabeçalhos e metadados
         if val_str.lower() in palavras_ignorar or any(
             val_str.lower().startswith(p) for p in palavras_ignorar
         ):
@@ -70,8 +81,7 @@ def extrair_nomes_formandos(file_formandos, coluna_letra="K"):
 def importar_formandos_stream(
     file_avaliacao, file_formandos, coluna_letra="K", aba_destino="Grelha Avaliacao"
 ):
-    """Lê os ficheiros em memória e preenche a grelha de avaliação Excel."""
-    # 1. Extrair a lista de nomes a partir da coluna K (ou selecionada)
+    """Lê os ficheiros em memória e preenche a grelha de avaliação Excel tratando células mescladas."""
     nomes_formandos = extrair_nomes_formandos(file_formandos, coluna_letra)
 
     if not nomes_formandos:
@@ -79,7 +89,6 @@ def importar_formandos_stream(
             f"Nenhum nome válido foi encontrado na Coluna {coluna_letra.upper()} do ficheiro de formandos."
         )
 
-    # 2. Carregar o ficheiro de avaliação preservando formatações e fórmulas
     wb = openpyxl.load_workbook(file_avaliacao)
 
     if aba_destino in wb.sheetnames:
@@ -87,18 +96,25 @@ def importar_formandos_stream(
     else:
         sheet = wb.active
 
-    # 3. Mapeamento de posições na pauta de avaliação
+    # Posições na pauta de avaliação
     linha_inicial = 14  # Linha onde começam os formandos na pauta
     coluna_num = 2  # Coluna B (Nº do Formando)
     coluna_nome = 11  # Coluna K (Nome na pauta de avaliação)
 
-    # 4. Inserir os nomes na pauta
+    # Inserir os nomes e números na pauta usando a função segura
     for idx, nome in enumerate(nomes_formandos):
         linha_atual = linha_inicial + idx
-        sheet.cell(row=linha_atual, column=coluna_num, value=idx + 1)
-        sheet.cell(row=linha_atual, column=coluna_nome, value=nome)
 
-    # 5. Guardar num buffer de memória para download
+        # Número do formando (Coluna B)
+        definir_valor_celula_seguro(
+            sheet, row=linha_atual, col=coluna_num, value=idx + 1
+        )
+
+        # Nome do formando (Coluna K)
+        definir_valor_celula_seguro(
+            sheet, row=linha_atual, col=coluna_nome, value=nome
+        )
+
     output_buffer = io.BytesIO()
     wb.save(output_buffer)
     output_buffer.seek(0)
@@ -126,7 +142,6 @@ with col2:
         key="list",
     )
 
-# Opção de seleção da coluna onde estão os nomes
 col_opcao = st.text_input(
     "Letra da Coluna que contém os nomes dos formandos:",
     value="K",
@@ -145,10 +160,9 @@ if file_eval and file_list:
                 )
 
             st.success(
-                f"✅ Importação concluída! {num_total} formandos foram inseridos na pauta."
+                f"✅ Importação concluída! {num_total} formandos foram inseridos na pauta com sucesso."
             )
 
-            # Botão de descarregar ficheiro final
             st.download_button(
                 label="📥 Descarregar Pauta de Avaliação Preenchida",
                 data=excel_gerado,
